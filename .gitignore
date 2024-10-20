@@ -1,0 +1,91 @@
+# General
+###################
+# Compiled Object files
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+*.lai
+*.la
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug files
+*.dSYM/
+*.stackdump
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# C++ Specific
+###################
+# General C++ related
+*.d
+
+# C++ Debug/Release Builds
+build/
+bin/
+lib/
+
+# Fortran module files
+*.mod
+*.smod
+
+# Python Specific
+###################
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual Environments
+env/
+venv/
+ENV/
+venv.bak/
+
+# PyInstaller
+# Usually contains the "build" and "dist" folders
+/dist/
+/build/
+/*.spec
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# CMake Specific
+###################
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Custom CMake output directories
+/build/
+
+assets/
