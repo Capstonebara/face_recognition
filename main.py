@@ -12,8 +12,6 @@ import csv
 from datetime import datetime
 import pytz
 from collections import deque
-
-
 class FaceRecognitionPipeline:
     def __init__(self, device="cuda" if torch.cuda.is_available() else "cpu"):
         self.device = device
@@ -35,50 +33,89 @@ class FaceRecognitionPipeline:
         )
         self.labels = []
         self.label_ranges = {}
+        self.usernames = {}  # Store usercode -> username mapping
         self.csv_file = "recognized_users.csv"
         self.initialize_csv()
-        self.recognized_users = set()  # Initialize this attribute
-        self.recognition_history: Dict[str, deque] = {}
+        self.recognized_users = set()
+        self.recognition_history = {}
         self.recognition_threshold = 5
         self.history_length = 10
         self.confidence_threshold = 0.6
 
+    def initialize_csv(self):
+        if not os.path.exists(self.csv_file):
+            with open(self.csv_file, "w", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow(["ID", "Username", "Timestamp (GMT+7)"])
+
+    def log_recognized_user(self, usercode):
+        if usercode not in self.recognized_users:
+            tz = pytz.timezone("Asia/Bangkok")
+            timestamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+            username = self.usernames.get(usercode, usercode)
+            with open(self.csv_file, "a", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow([usercode, username, timestamp])
+            self.recognized_users.add(usercode)
+
+    def load_embedding_from_json(self, json_path: str) -> np.ndarray:
+        """Load a single embedding from a JSON file"""
+        try:
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+                # Assuming the embedding is stored directly in the JSON
+                embedding = np.array(data).astype('float32')
+                if embedding.shape != (512,):  # Verify embedding dimension
+                    print(f"Warning: Invalid embedding dimension in {json_path}")
+                    return None
+                return embedding
+        except Exception as e:
+            print(f"Error loading embedding from {json_path}: {e}")
+            return None
+
+    def add_person_from_directory(self, directory_name: str, directory_path: str):
+        """
+        Add person from a directory containing individual JSON embedding files
+        Args:
+            directory_name (str): Directory name in format "[usercode] Username"
+            directory_path (str): Path to the directory containing JSON files
+        """
+        try:
+            # Extract usercode and username from directory name
+            # Format: [usercode] Username
+            usercode = directory_name[1:].split("]")[0]  # Remove [ and get everything before ]
+            username = directory_name.split("]")[1].strip()  # Get everything after ] and strip spaces
+            
+            # Collect all embeddings from JSON files
+            embeddings = []
+            json_files = [f for f in os.listdir(directory_path) if f.endswith('.json')]
+            
+            for json_file in json_files:
+                json_path = os.path.join(directory_path, json_file)
+                embedding = self.load_embedding_from_json(json_path)
+                if embedding is not None:
+                    embeddings.append(embedding)
+            
+            if embeddings:
+                start_index = self.index.ntotal
+                embeddings_array = np.stack(embeddings)
+                self.index.add(embeddings_array)
+                end_index = self.index.ntotal
+                
+                self.label_ranges[usercode] = (start_index, end_index)
+                self.labels.append(usercode)
+                self.usernames[usercode] = username
+                
+                print(f"Added {username} ({usercode}) with {len(embeddings)} embeddings")
+            else:
+                print(f"No valid embeddings found for {username} ({usercode})")
+                
+        except Exception as e:
+            print(f"Error processing directory {directory_name}: {str(e)}")
+
     def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         boxes, _ = self.mtcnn.detect(image)
         return boxes
-
-    def get_embedding(self, face_image: Image.Image) -> np.ndarray:
-        face_tensor = self.transform(face_image).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            embedding = self.facenet(face_tensor)
-        return embedding.cpu().numpy()
-
-    def add_person_from_embeddings(self, name: str, json_file_path: str):
-        start_index = self.index.ntotal
-        embeddings, labels = load_precomputed_embeddings(json_file_path)
-        if embeddings is not None:
-            self.index.add(embeddings)
-            end_index = self.index.ntotal
-            self.label_ranges[name] = (start_index, end_index)
-            self.labels.append(name)
-
-    def add_person(self, name, image_folder):
-        start_index = self.index.ntotal
-        embeddings = []
-        for image_file in os.listdir(image_folder):
-            image_path = os.path.join(image_folder, image_file)
-            image = Image.open(image_path)
-            boxes = self.detect_faces(np.array(image))
-            if boxes is not None:
-                for box in boxes:
-                    face = image.crop(box)
-                    embedding = self.get_embedding(face)
-                    embeddings.append(embedding[0])
-        if embeddings:
-            self.index.add(np.array(embeddings))
-            end_index = self.index.ntotal
-            self.label_ranges[name] = (start_index, end_index)
-            self.labels.append(name)
 
     def recognize_face(
         self, image: np.ndarray, threshold: float = 0.7
@@ -102,7 +139,6 @@ class FaceRecognitionPipeline:
                                 break
                     results.append((boxes[i], recognized_label, distance[0]))
         return results
-
     def update_recognition_history(self, label: str, confidence: float) -> bool:
         if label not in self.recognition_history:
             self.recognition_history[label] = deque(maxlen=self.history_length)
@@ -115,36 +151,33 @@ class FaceRecognitionPipeline:
                 return True
         return False
 
-    def initialize_csv(self):
-        if not os.path.exists(self.csv_file):
-            with open(self.csv_file, "w", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow(["ID", "Timestamp (GMT+7)"])
-
-    def log_recognized_user(self, user_id):
-        if user_id not in self.recognized_users:
-            tz = pytz.timezone("Asia/Bangkok")
-            timestamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-            with open(self.csv_file, "a", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow([user_id, timestamp])
-            self.recognized_users.add(user_id)
-
+    def get_embedding(self, face_image: Image.Image) -> np.ndarray:
+        face_tensor = self.transform(face_image).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            embedding = self.facenet(face_tensor)
+        return embedding.cpu().numpy()
     def real_time_recognition(self):
+        """Start real-time face recognition using webcam"""
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             print("Error: Could not open webcam.")
             return
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 print("Error: Couldn't fetch the frame.")
                 break
+
             results = self.recognize_face(frame)
+            
             for box, label, distance in results:
                 if distance > self.confidence_threshold:
                     label = "Unknown"
+                
                 color = (0, 255, 0) if label != "Unknown" else (0, 0, 255)
+                
+                # Draw bounding box
                 cv2.rectangle(
                     frame,
                     (int(box[0]), int(box[1])),
@@ -152,6 +185,8 @@ class FaceRecognitionPipeline:
                     color,
                     2,
                 )
+                
+                # Add label and confidence score
                 cv2.putText(
                     frame,
                     f"{label}: {distance:.2f}",
@@ -161,59 +196,34 @@ class FaceRecognitionPipeline:
                     color,
                     2,
                 )
+                
+                # Handle recognition logging
                 if label != "Unknown":
-                    if self.update_recognition_history(label, distance):
-                        self.log_recognized_user(label)
+                    usercode = next((code for code, name in self.usernames.items() if name == label), label)
+                    if self.update_recognition_history(usercode, distance):
+                        self.log_recognized_user(usercode)
+            
             cv2.imshow("Real-Time Face Recognition", frame)
+            
+            # Press 'q' to quit
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+
         cap.release()
         cv2.destroyAllWindows()
 
-
-def load_precomputed_embeddings(json_file_path: str) -> Tuple[np.ndarray, List[str]]:
-    embeddings = []
-    labels = []
-    with open(json_file_path, "r") as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"Error loading {json_file_path}: {e}")
-            return None, None
-        for image_name, embedding_data in data.items():
-            embeddings.append(embedding_data["vector"])
-            labels.append(image_name)
-    if embeddings:
-        embeddings_np = np.array(embeddings).astype("float32")
-        return embeddings_np, labels
-    else:
-        print("No embeddings found.")
-        return None, None
-
-
-# Main script to run the face recognition pipeline
+# Main script
 if __name__ == "__main__":
     pipeline = FaceRecognitionPipeline()
 
-    # Add known faces from precomputed embeddings stored in JSON files
-    json_folder_path = "/home/vanellope/face_recognition_project/embedding/"
+    # Add known faces from embedding directories
+    embedding_root = "/home/vanellope/face_recognition_project/embedding/"
+    
+    for user_folder in os.listdir(embedding_root):
+        folder_path = os.path.join(embedding_root, user_folder)
+        if os.path.isdir(folder_path):
+            print(f"Processing {user_folder}...")
+            pipeline.add_person_from_directory(user_folder, folder_path)
 
-    for filename in os.listdir(json_folder_path):
-        if filename.endswith("_embeddings.json"):
-            name = filename.split("_embeddings")[0]
-            json_file = os.path.join(json_folder_path, filename)
-            print(f"Adding {name} from {json_file}...")
-            pipeline.add_person_from_embeddings(name, json_file)
-    #  assets_directory = "/home/vanellope/face_recognition_project/assets"
-    #  people = [
-    #      (folder_name, os.path.join(assets_directory, folder_name))
-    #      for folder_name in os.listdir(assets_directory)
-    #      if os.path.isdir(os.path.join(assets_directory, folder_name))
-    #  ]
-
-    #  # Add known faces to the database using a loop
-    #  for name, folder in people:
-    #      print(f"Adding {name} from {folder}...")
-    #      pipeline.add_person(name, folder)
     # Start real-time face recognition
     pipeline.real_time_recognition()
