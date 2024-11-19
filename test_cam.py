@@ -2,7 +2,7 @@ import cv2
 import time
 
 # Open the camera
-cap = cv2.VideoCapture()
+cap = cv2.VideoCapture(1)
 
 if not cap.isOpened():
     print("Error: Could not open video device.")
@@ -32,11 +32,10 @@ while True:
     # Accumulate capture time and increment frame count
     total_capture_time += capture_time
     
-    frame_count += 1
+    frame_count += 1.0
 
     # Check if total capture time is >= 1 second
     if total_capture_time >= 1.0:
-        print(f"Total capture time: {total_capture_time:.5f} seconds")
         # Calculate FPS
         fps = frame_count / total_capture_time
         # print(f"Capture FPS: {fps:.2f}")
