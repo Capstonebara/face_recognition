@@ -12,6 +12,33 @@ import csv
 from datetime import datetime
 import pytz
 from collections import deque
+
+def gstreamer_pipeline(
+    sensor_id=0,
+    capture_width=1920,
+    capture_height=1080,
+    display_width=960,
+    display_height=540,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        "nvarguscamerasrc sensor-id=%d ! "
+        "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+        % (
+            sensor_id,
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
 class FaceRecognitionPipeline:
     def __init__(self, device="cuda" if torch.cuda.is_available() else "cpu"):
         self.device = device
@@ -158,7 +185,7 @@ class FaceRecognitionPipeline:
         return embedding.cpu().numpy()
     def real_time_recognition(self):
         """Start real-time face recognition using webcam"""
-        cap = cv2.VideoCapture(0)
+        cap  = cv2.VideoCapture(gstreamer_pipeline(flip_method=0), cv2.CAP_GSTREAMER)
         if not cap.isOpened():
             print("Error: Could not open webcam.")
             return
@@ -217,7 +244,7 @@ if __name__ == "__main__":
     pipeline = FaceRecognitionPipeline()
 
     # Add known faces from embedding directories
-    embedding_root = "/home/vanellope/face_recognition_project/embedding/"
+    embedding_root = "/home/jetson/face_recognition/embedding/"
     
     for user_folder in os.listdir(embedding_root):
         folder_path = os.path.join(embedding_root, user_folder)
