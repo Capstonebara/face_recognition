@@ -89,3 +89,5 @@ Makefile
 /build/
 
 assets/
+embedding/
+logs/
