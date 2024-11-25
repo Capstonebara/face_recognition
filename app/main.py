@@ -11,7 +11,7 @@ import csv
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
-from model.main import FaceRecognitionPipeline
+from model.test_main import FaceRecognitionPipeline
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
