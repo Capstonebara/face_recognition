@@ -322,29 +322,22 @@ class CameraWindow(QMainWindow):
 
 
 class PandasModel(QAbstractTableModel):
-    def __init__(self, data, max_rows=4):
+    def __init__(self, data):
         super().__init__()
-        self.max_rows = max_rows
-        self._data = self.process_data(data)
-
-    def process_data(self, data):
-        # If the dataframe has more rows than max_rows, keep only the most recent ones
-        if len(data) > self.max_rows:
-            return data.iloc[-self.max_rows :]
-        return data
+        self._data = data  # Remove the max_rows
 
     def rowCount(self, parent=None):
         return len(self._data)
-
+        
     def columnCount(self, parent=None):
         return len(self._data.columns)
-
+        
     def data(self, index, role=Qt.DisplayRole):
         if role == Qt.DisplayRole:
             value = self._data.iloc[index.row(), index.column()]
             return str(value)
         return None
-
+        
     def headerData(self, section, orientation, role):
         if role == Qt.DisplayRole:
             if orientation == Qt.Horizontal:
