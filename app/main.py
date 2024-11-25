@@ -3,6 +3,7 @@ import os
 import cv2
 import pandas as pd
 import time
+from PIL import ImageFont, ImageDraw, Image
 from pathlib import Path
 import csv
 
@@ -39,47 +40,103 @@ class FileWatcher(QThread):
         self.file_path = file_path
         self.running = True
         self.last_modified_time = 0
+        self.headers = ["ID", "Email", "Name", "Club", "Status", "Timestamp (GMT+7)"]
+        self.headers_added = False  # Flag to track if we've logged the headers message
         self.initialize_csv()
 
     def initialize_csv(self):
-        if not os.path.exists(self.file_path):
-            # Ensure the directory exists
+        """Initialize or reinitialize the CSV file with headers"""
+        try:
+            # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
 
-            # Write headers to a new CSV file
-            with open(self.file_path, "w", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow(["ID", "Email", "Name", "Club", "Status"])
+            # Check if file exists
+            file_exists = os.path.exists(self.file_path)
+            
+            if not file_exists:
+                # File doesn't exist - create new with headers
+                if not self.headers_added:
+                    print("Creating new CSV file with headers...")
+                    self.headers_added = True
+                with open(self.file_path, "w", newline="", encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(self.headers)
+                return
 
-                # Add a sample row to avoid the file being completely empty
-                writer.writerow(
-                    [
-                        "1",
-                        "System",
-                        time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 7 * 3600)
-                        ),  # GMT+7
-                    ]
-                )
+            # File exists - read content
+            try:
+                df = pd.read_csv(self.file_path, encoding='utf-8')
+                
+                # Check if file is empty (no data rows)
+                if df.empty:
+                    if not self.headers_added:
+                        print("File is empty. Adding headers...")
+                        self.headers_added = True
+                    with open(self.file_path, "w", newline="", encoding='utf-8') as file:
+                        writer = csv.writer(file)
+                        writer.writerow(self.headers)
+                    return
+                
+                # Check if headers match expected headers
+                if list(df.columns) != self.headers:
+                    print("Headers don't match expected format. Fixing...")
+                    # Create backup of existing file
+                    backup_path = f"{self.file_path}.backup"
+                    os.rename(self.file_path, backup_path)
+                    print(f"Created backup at {backup_path}")
+                    
+                    # Create new file with correct headers and existing data
+                    with open(self.file_path, "w", newline="", encoding='utf-8') as file:
+                        writer = csv.writer(file)
+                        writer.writerow(self.headers)
+                        
+                        # If there was any data in the original file, write it back
+                        if len(df) > 0:
+                            df.to_csv(self.file_path, mode='a', header=False, index=False)
+                    
+            except pd.errors.EmptyDataError:
+                # File exists but is completely empty
+                if not self.headers_added:
+                    print("File exists but is empty. Adding headers...")
+                    self.headers_added = True
+                with open(self.file_path, "w", newline="", encoding='utf-8') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(self.headers)
 
-        # Handle blank but existing files
-        elif os.path.getsize(self.file_path) == 0:
-            with open(self.file_path, "w", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerow(["ID", "Email", "Name", "Club", "Status"])
+        except Exception as e:
+            print(f"Error initializing CSV: {e}")
 
     def run(self):
-        self.initialize_csv()  # Ensure CSV exists when thread starts
         while self.running:
             try:
-                current_mtime = os.path.getmtime(self.file_path)
-                if current_mtime > self.last_modified_time:
-                    df = pd.read_csv(self.file_path)
-                    self.file_changed.emit(df)
-                    self.last_modified_time = current_mtime
+                # Always ensure file exists with headers before processing
+                if not os.path.exists(self.file_path):
+                    self.initialize_csv()
+                    continue
+
+                # Read file to check if it's properly formatted
+                try:
+                    df = pd.read_csv(self.file_path, encoding='utf-8')
+                    
+                    # If file is empty or headers don't match, reinitialize
+                    if df.empty or list(df.columns) != self.headers:
+                        self.initialize_csv()
+                        continue
+                        
+                    current_mtime = os.path.getmtime(self.file_path)
+                    if current_mtime > self.last_modified_time:
+                        self.file_changed.emit(df)
+                        self.last_modified_time = current_mtime
+                        
+                except pd.errors.EmptyDataError:
+                    self.initialize_csv()
+                    continue
+
             except Exception as e:
                 print(f"Error reading file: {e}")
-            self.msleep(100)
+                self.initialize_csv()
+            
+            self.msleep(100)  # Short sleep to prevent high CPU usage
 
     def stop(self):
         self.running = False
@@ -94,26 +151,41 @@ class VideoThread(QThread):
         self.running = True
         self.model = face_recognition_model
         self.cap = None
+        # Initialize font for text rendering
+        try:
+            self.font = ImageFont.truetype("assets/dejavu-sans/DejaVuSans.ttf", 20)
+        except Exception as e:
+            print(f"Error loading font: {e}")
+            self.font = None
 
     def run(self):
-        cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(0)
         while self.running:
-            ret, frame = cap.read()
+            ret, frame = self.cap.read()
             if ret:
                 if self.model:
+                    # Get recognition results
                     results = self.model.recognize_face(frame)
+                    
+                    # Create a copy of the frame for drawing
+                    display_frame = frame.copy()
+
+                    # First draw all OpenCV elements (boxes and progress bars)
                     for box, label, distance, progress in results:
                         if distance > self.model.confidence_threshold:
-                            label = "Unknown"
+                            display_label = "Unknown"
+                            color = (0, 0, 255)  # BGR format for OpenCV
+                        else:
+                            display_label = self.model.user_metadata.get(label, {}).get("Name", "Unknown")
+                            color = (0, 255, 0)  # BGR format for OpenCV
 
-                        color = (0, 255, 0) if label != "Unknown" else (0, 0, 255)
-
+                        # Draw bounding box
                         cv2.rectangle(
-                            frame,
+                            display_frame,
                             (int(box[0]), int(box[1])),
                             (int(box[2]), int(box[3])),
                             color,
-                            2,
+                            2
                         )
 
                         # Draw detection progress bar if face is being recognized
@@ -124,48 +196,55 @@ class VideoThread(QThread):
 
                             # Draw background bar
                             cv2.rectangle(
-                                frame,
+                                display_frame,
                                 (int(box[0]), int(box[1] - 20)),
                                 (int(box[0] + bar_width), int(box[1] - 15)),
                                 (100, 100, 100),
-                                -1,
+                                -1
                             )
 
                             # Draw filled progress
                             cv2.rectangle(
-                                frame,
+                                display_frame,
                                 (int(box[0]), int(box[1] - 20)),
                                 (int(box[0] + filled_width), int(box[1] - 15)),
                                 (0, 255, 0),
-                                -1,
+                                -1
                             )
 
-                        cv2.putText(
-                            frame,
-                            f"{label}: {distance:.2f}",
-                            (int(box[0]), int(box[1] - 25)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.8,
-                            color,
-                            2,
-                        )
-
+                        # Handle recognition logging
                         if label != "Unknown":
-                            usercode = next(
-                                (
-                                    code
-                                    for code, name in self.model.usernames.items()
-                                    if name == label
-                                ),
-                                label,
-                            )
-                            if self.model.update_recognition_history(
-                                usercode, distance
-                            ):
-                                self.model.log_recognized_user(usercode)
-                                self.face_detected_signal.emit(usercode)
+                            if self.model.update_recognition_history(label, distance):
+                                self.model.log_recognized_user(label)
+                                self.face_detected_signal.emit(label)
 
-                self.change_pixmap_signal.emit(frame)
+                    # Convert to PIL for text rendering
+                    if self.font:
+                        pil_image = Image.fromarray(cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB))
+                        draw = ImageDraw.Draw(pil_image)
+
+                        # Draw text on PIL image
+                        for box, label, distance, progress in results:
+                            if distance > self.model.confidence_threshold:
+                                display_label = "Unknown"
+                                color = (255, 0, 0)  # RGB format for PIL
+                            else:
+                                display_label = self.model.user_metadata.get(label, {}).get("Name", "Unknown")
+                                color = (0, 255, 0)  # RGB format for PIL
+
+                            text = f"{display_label}: {distance:.2f}"
+                            draw.text(
+                                (int(box[0]), int(box[1] - 40)),
+                                text,
+                                font=self.font,
+                                fill=color
+                            )
+
+                        # Convert back to OpenCV format
+                        display_frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+                    self.change_pixmap_signal.emit(display_frame)
+
         if self.cap:
             self.cap.release()
 
@@ -287,7 +366,7 @@ class MainWindow(QMainWindow):
             folder_path = os.path.join(embedding_root, user_folder)
             if os.path.isdir(folder_path):
                 print(f"Processing {user_folder}...")
-                self.face_recognition_model.add_person_from_directory(
+                self.face_recognition_model.add_person_from_directory_v2(
                     user_folder, folder_path
                 )
 
