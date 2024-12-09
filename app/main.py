@@ -28,9 +28,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QAbstractTableModel, QSize
 from PyQt5.QtGui import QImage, QPixmap
 import numpy as np
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
 
 class FileWatcher(QThread):
     file_changed = pyqtSignal(pd.DataFrame)
@@ -158,8 +155,21 @@ class VideoThread(QThread):
             print(f"Error loading font: {e}")
             self.font = None
 
+    def gstreamer_pipeline(self):
+        return (
+            "nvarguscamerasrc ! "
+            "video/x-raw(memory:NVMM), framerate=(fraction)30/1 ! "
+            "nvvidconv flip-method=0 ! "
+            "video/x-raw, format=(string)BGRx ! "
+            "videoconvert ! "
+            "video/x-raw, format=(string)BGR ! appsink"
+        )
+
     def run(self):
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(self.gstreamer_pipeline(), cv2.CAP_GSTREAMER)
+        if not self.cap.isOpened():
+            print("Error: Could not open video stream with the GStreamer pipeline.")
+
         while self.running:
             ret, frame = self.cap.read()
             if ret:

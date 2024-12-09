@@ -340,32 +340,42 @@ from pathlib import Path
 import time
 from PIL import ImageFont, ImageDraw, Image
 
-def gstreamer_pipeline(
-    sensor_id=0,
-    capture_width=1920,
-    capture_height=1080,
-    display_width=960,
-    display_height=540,
-    framerate=30,
-    flip_method=0,
-):
+def gstreamer_pipeline():
     return (
-        "nvarguscamerasrc sensor-id=%d ! "
-        "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
-        "nvvidconv flip-method=%d ! "
-        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "nvarguscamerasrc ! "
+        "video/x-raw(memory:NVMM), framerate=(fraction)30/1 ! "
+        "nvvidconv flip-method=0 ! "
+        "video/x-raw, format=(string)BGRx ! "
         "videoconvert ! "
         "video/x-raw, format=(string)BGR ! appsink"
-        % (
-            sensor_id,
-            capture_width,
-            capture_height,
-            framerate,
-            flip_method,
-            display_width,
-            display_height,
-        )
     )
+
+#  def gstreamer_pipeline(
+#      sensor_id=0,
+#      capture_width=1920,
+#      capture_height=1080,
+#      display_width=960,
+#      display_height=540,
+#      framerate=30,
+#      flip_method=0,
+#  ):
+#      return (
+#          "nvarguscamerasrc sensor-id=%d ! "
+#          "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+#          "nvvidconv flip-method=%d ! "
+#          "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+#          "videoconvert ! "
+#          "video/x-raw, format=(string)BGR ! appsink"
+#          % (
+#              sensor_id,
+#              capture_width,
+#              capture_height,
+#              framerate,
+#              flip_method,
+#              display_width,
+#              display_height,
+#          )
+#      )
 
 
 class FaceRecognitionPipeline:
@@ -496,11 +506,14 @@ class FaceRecognitionPipeline:
 
     def real_time_recognition(self):
         """Start real-time face recognition using webcam"""
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
         if not cap.isOpened():
             print("Error: Could not open webcam.")
             return
 
+        #  # Create a window for full screen
+        #  cv2.namedWindow("Camera Feed", cv2.WND_PROP_FULLSCREEN)
+        #  cv2.setWindowProperty("Camera Feed", cv2.WND_PROP_FULLSCREEN, 1)
         font_path = "assets/dejavu-sans/DejaVuSans.ttf"
         font = ImageFont.truetype(font_path, 20)
 
